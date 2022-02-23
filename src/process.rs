@@ -41,9 +41,8 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
             .template("[{elapsed} / {eta}]({per_sec}) {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
             .progress_chars("##-"),
     );
-    use std::cell::RefCell;
-    triples.iter().progress_with(bar).for_each(|triple| {
-        
+    let num_cores = num_cpus::get();
+    triples.iter().progress_with(bar).for_each(|triple| {  
         map.entry(triple.head).or_insert(Vec::with_capacity(4)).push(triple);
     });
     println!("Map built.");
