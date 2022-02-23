@@ -3,6 +3,8 @@ use std::fs;
 use std::io::{Read, Write, BufWriter};
 use rand::prelude::*;
 use indicatif::{ProgressBar, ProgressStyle, ProgressIterator};
+use crossbeam::scope;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone)]
 struct Triple<'a> {
@@ -12,7 +14,7 @@ struct Triple<'a> {
 }
 impl fmt::Display for Triple<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_> ) -> fmt::Result {
-        write!(f, "{} {} {}", self.head, self.relation, self.tail)
+        write!(f, "{}\t{}\t{}", self.head, self.relation, self.tail)
     }
 }
 
@@ -33,7 +35,6 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     println!("{} triples", triples.len());
-    let mut map = std::collections::HashMap::<&str, Vec<&Triple>>::with_capacity(triples.len());
     println!("Building maps...");
     let bar = ProgressBar::new(triples.len() as u64);
     bar.set_style(
@@ -41,11 +42,28 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
             .template("[{elapsed} / {eta}]({per_sec}) {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
             .progress_chars("##-"),
     );
+    bar.set_draw_delta(100000);
     let num_cores = num_cpus::get();
-    triples.iter().progress_with(bar).for_each(|triple| {  
-        map.entry(triple.head).or_insert(Vec::with_capacity(4)).push(triple);
-    });
-    println!("Map built.");
+    let mut maps = vec![];
+    scope(|s| {
+        let mut threads = vec![];
+        for chunk in triples.chunks(triples.len() / num_cores + 1) {
+            threads.push(s.spawn(|_| {
+                let mut map = std::collections::HashMap::<&str, Vec<&Triple>>::with_capacity(chunk.len());
+                chunk.iter().for_each(|triple| { 
+                    // bar.inc(1);
+                    map.entry(triple.head).or_insert(Vec::with_capacity(4)).push(triple);
+                });
+                map
+            }));
+        }
+        threads.into_iter().for_each(|thread| { 
+            let map = thread.join().unwrap();
+            maps.push(map);
+            bar.inc(1);
+        });
+    }).unwrap();
+    println!("{} maps built with total size {}", maps.len(), maps.iter().map(|m| m.len()).sum::<usize>());
     println!("Finding neighbor...");
     let bar = ProgressBar::new(triples.len() as u64);
     bar.set_style(
@@ -53,13 +71,30 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
             .template("[{elapsed} / {eta}]({per_sec}) {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
             .progress_chars("##-"),
     );
-    let new_triples = triples.iter().progress_with(bar).filter_map(|triple| -> Option<&Triple> {
-        Some(map.get(triple.tail)?.choose(&mut rand::thread_rng())?.clone())
-    });
+    bar.set_draw_delta(100000);
     let mut writer = BufWriter::new(fs::File::create(String::from(name) + "_ptranse")?);
-    for triple in new_triples {
-        writer.write(format!("{}\n", triple).as_bytes())?;
-    }
+    
+    triples.par_iter().map(|triple| -> (&Triple, Option<&Triple>) {
+        // bar.inc(1);
+        let initial = thread_rng().gen_range(0..maps.len());
+        // iterator maps from id:
+        for id in 0..num_cores {
+            if let Some(neighbors) = maps[(initial + id) % num_cores].get(triple.tail) {
+                return (triple, Some(neighbors.choose(&mut thread_rng()).unwrap()));
+            }
+        }
+        (triple, None)
+        // Some(map.get(triple.tail)?.choose(&mut rand::thread_rng())?.clone())
+    }).collect::<Vec<_>>().iter().for_each(|triple| {
+        match triple {
+            (triple, Some(neighbor)) => {
+                writer.write_all(format!("{}\t{}\t{}\n", triple, neighbor.relation, neighbor.tail).as_bytes()).unwrap();
+            },
+            (triple, None) => {
+                writer.write_all(format!("{}\n", triple).as_bytes()).unwrap();
+            },
+        }
+    });
     println!("Found neighbor!");
     Ok(())
 }
