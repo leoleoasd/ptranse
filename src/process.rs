@@ -88,13 +88,14 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     }).collect::<Vec<_>>().iter().for_each(|triple| {
         match triple {
             (triple, Some(neighbor)) => {
-                writer.write_all(format!("{}\t{}\t{}\n", triple, neighbor.relation, neighbor.tail).as_bytes()).unwrap();
+                writer.write(format!("{}\t{}\t{}\n", triple, neighbor.relation, neighbor.tail).as_bytes()).unwrap();
             },
             (triple, None) => {
-                writer.write_all(format!("{}\n", triple).as_bytes()).unwrap();
+                writer.write(format!("{}\n", triple).as_bytes()).unwrap();
             },
         }
     });
+    writer.flush()?;
     println!("Found neighbor!");
     Ok(())
 }
