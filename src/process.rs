@@ -105,14 +105,14 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     // h, (r, t)
     // let mut one_hop_map: DashMap<Spur, Vec<(Spur, Spur)>, _> = DashMap::with_hasher_and_shard_amount(FxBuildHasher::default(), 128);
     let mut one_hop_map = (0..entity_map.len() + 1)
-        .map(|_| RwLock::new(FxHashMap::<Spur, Spur>::default()))
+        .map(|_| RwLock::new(FxHashMap::<Spur, Vec<Spur>>::default()))
         .collect::<Vec<_>>();
     triples.par_iter().for_each(|triple| unsafe {
-        one_hop_map
+        let mut guard = one_hop_map
             .get_unchecked(triple.head.into_usize())
             .write()
-            .unwrap()
-            .insert(triple.relation, triple.tail);
+            .unwrap();
+        guard.entry(triple.relation).or_default().push(triple.tail);
     });
     bar.finish();
     println!("One-hop map built! Building two-hop map...");
@@ -126,7 +126,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut two_hop_map = (0..entity_map.len() + 1)
         .map(|_| RwLock::new(FxHashMap::<(Spur, Spur), FxHashSet<Spur>>::default()))
         .collect::<Vec<_>>();
-        
+
     let bar = ProgressBar::new(one_hop_map.len() as u64);
     bar.set_style(
         ProgressStyle::default_bar()
@@ -138,15 +138,28 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     one_hop_map.par_iter().enumerate().for_each(|(h, rt)| {
         for (r, t) in rt {
             unsafe {
-                for (r2, t2) in one_hop_map.get_unchecked(t.into_usize()) {
-                    two_hop_map
-                        .get_unchecked(h)
-                        .write()
-                        .unwrap()
-                        .entry((*r, *r2))
-                        .or_default()
-                        .insert(*t2);
-                    // two_hop_map.entry((Spur{key: NonZeroU32::new_unchecked(h as u32)}, *r, *r2)).or_default().insert(*t2);
+                for t in t {
+                    for (r2, t2) in one_hop_map.get_unchecked(t.into_usize()) {
+                        for t2 in t2 {
+                            two_hop_map
+                            .get_unchecked(h)
+                            .write()
+                            .unwrap()
+                            .entry((*r, *r2))
+                            .or_default()
+                            .insert(*t2);
+                            if two_hop_map
+                            .get_unchecked(h)
+                            .write()
+                            .unwrap()
+                            .entry((*r, *r2))
+                            .or_default()
+                            .len() >= 5{
+                                break
+                            }
+                        }
+                        // two_hop_map.entry((Spur{key: NonZeroU32::new_unchecked(h as u32)}, *r, *r2)).or_default().insert(*t2);
+                    }
                 }
             }
         }
@@ -168,7 +181,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = BufWriter::new(fs::File::create(String::from(name) + "_ptranse")?);
 
     triples
-        .par_iter()
+        .iter()
         .map(|triple| -> (&Triple, Option<(Spur, Spur, f64)>) {
             bar.inc(1);
             unsafe {
@@ -186,7 +199,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                                     .get_unchecked(triple.head.into_usize())
                                     .get(&(triple.relation, *relation))
                                     .map(|t| t.len())
-                                    .unwrap_or(0) as f64,
+                                    .unwrap() as f64,
                             )
                         })
                         .filter(|(_, _, score)| score.is_finite())
@@ -204,7 +217,11 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     (
                         triple,
-                        Some((min_score.0.clone(), min_score.1.clone(), min_score.2 / sum)),
+                        Some((
+                            min_score.0.clone(),
+                            min_score.1.get_unchecked(0).clone(),
+                            min_score.2 / sum,
+                        )),
                     )
                 }
             }
