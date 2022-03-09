@@ -148,15 +148,6 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                             .entry((*r, *r2))
                             .or_default()
                             .insert(*t2);
-                            if two_hop_map
-                            .get_unchecked(h)
-                            .write()
-                            .unwrap()
-                            .entry((*r, *r2))
-                            .or_default()
-                            .len() >= 5{
-                                break
-                            }
                         }
                         // two_hop_map.entry((Spur{key: NonZeroU32::new_unchecked(h as u32)}, *r, *r2)).or_default().insert(*t2);
                     }
