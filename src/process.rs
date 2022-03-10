@@ -7,12 +7,12 @@ use petgraph::graph::{Graph, NodeIndex};
 use petgraph::prelude::*;
 use petgraph::Directed;
 use rayon::prelude::*;
+use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::num::NonZeroU32;
 use std::sync::RwLock;
-
 /// The default key for every Rodeo, uses only 32 bits of space
 ///
 /// Internally is a `NonZeroU32` to allow for space optimizations when stored inside of an [`Option`]
@@ -123,43 +123,38 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Vec<_>>();
     // h, r1, r2, t
     // let mut two_hop_map: DashMap<(Spur, Spur, Spur), FxHashSet<Spur>, _> = DashMap::with_hasher_and_shard_amount(FxBuildHasher::default(), 128);
-    let mut two_hop_map = (0..entity_map.len() + 1)
-        .map(|_| RwLock::new(FxHashMap::<(Spur, Spur), FxHashSet<Spur>>::default()))
-        .collect::<Vec<_>>();
+    // let mut two_hop_map = (0..entity_map.len() + 1)
+    //     .map(|_|FxHashMap::<(Spur, Spur), FxHashSet<Spur>>::default())
+    //     .collect::<Vec<_>>();
 
     let bar = ProgressBar::new(one_hop_map.len() as u64);
     bar.set_style(
         ProgressStyle::default_bar()
             .template("[{elapsed} / {eta}]({per_sec}) {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-            .progress_chars("##-"),
+            .progress_chars("#>-"),
     );
     bar.set_draw_rate(10);
-    // let one_hop_map = one_hop_map.into_read_only();
-    one_hop_map.par_iter().enumerate().for_each(|(h, rt)| {
-        for (r, t) in rt {
-            unsafe {
-                for t in t {
-                    for (r2, t2) in one_hop_map.get_unchecked(t.into_usize()) {
-                        for t2 in t2 {
-                            two_hop_map
-                            .get_unchecked(h)
-                            .write()
-                            .unwrap()
-                            .entry((*r, *r2))
-                            .or_default()
-                            .insert(*t2);
+    let two_hop_map: Vec<_> = one_hop_map
+        .par_iter()
+        .map(|rt| {
+            let mut map = FxHashMap::<(Spur, Spur), Vec<Spur>>::default();
+            for (r, t) in rt {
+                unsafe {
+                    for t in t {
+                        for (r2, t2) in one_hop_map.get_unchecked(t.into_usize()) {
+                            map.entry((*r, *r2)).or_insert_with(|| Vec::with_capacity(200)).extend(t2)
                         }
-                        // two_hop_map.entry((Spur{key: NonZeroU32::new_unchecked(h as u32)}, *r, *r2)).or_default().insert(*t2);
                     }
                 }
             }
-        }
-        bar.inc(1);
-    });
-    let two_hop_map = two_hop_map
-        .into_iter()
-        .filter_map(|x| x.into_inner().ok())
-        .collect::<Vec<_>>();
+            bar.inc(1);
+            map.into_iter().map(|(k, mut v)| {
+                v.sort_unstable();
+                v.dedup();
+                (k, v.len())
+            }).collect::<FxHashMap<(Spur, Spur), usize>>()
+        })
+        .collect();
 
     println!("Finding neighbor...");
     let bar = ProgressBar::new(triples.len() as u64);
@@ -186,10 +181,9 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                             (
                                 relation,
                                 tail2,
-                                1.0 / two_hop_map
+                                1.0 / *two_hop_map
                                     .get_unchecked(triple.head.into_usize())
                                     .get(&(triple.relation, *relation))
-                                    .map(|t| t.len())
                                     .unwrap() as f64,
                             )
                         })
@@ -252,82 +246,6 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         });
-
-    // triples
-    //     .par_iter()
-    //     .map(|triple| -> (&Triple, Option<(Triple, f64)>) {
-    //         bar.inc(1);
-    //         if !graph.neighbors(triple.tail.into()).any(|x| true) {
-    //             return (triple, None);
-    //         }
-    //         let mut set: FxHashMap<NicheKey, FxHashSet<NodeIndex>> = FxHashMap::default();
-    //         // graph.edges(triple.tail.into()).filter(|e| *e.weight() == triple.relation).for_each(|edge| {
-
-    //         // });
-    //         // for e1 in graph.edges(triple.head.into()) {
-    //         //     if *e1.weight() == triple.relation {
-    //         //         for e2 in graph.edges(e1.target()) {
-    //         //             set.entry(*e2.weight()).or_default().insert(e2.target());
-    //         //         }
-    //         //     }
-    //         // }
-    //         let max = set.iter().max_by_key(|(_, v)| v.len());
-    //         let sum = set.iter().map(|(_, v)| v.len()).sum::<usize>();
-    //         if let Some((k, v)) = max {
-    //             // (triple, Some((triple, v.len() as f64)))
-    //             if v.len() == 0 {
-    //                 (triple, Option::<(Triple, f64)>::None);
-    //             }
-    //             {
-    //                 let first = v.iter().next().unwrap();
-    //                 (
-    //                     triple,
-    //                     Some((
-    //                         Triple {
-    //                             head: triple.tail,
-    //                             relation: *k,
-    //                             tail: first.into(),
-    //                         },
-    //                         v.len() as f64 / sum as f64,
-    //                     )),
-    //                 )
-    //             }
-    //         } else {
-    //             (triple, None)
-    //         }
-    //     })
-    //     .collect::<Vec<_>>()
-    //     .iter()
-    //     .for_each(|triple| {
-    //         unsafe {
-    //             match triple {
-    //                 (triple, Some(neighbor)) => {
-    //                     writer
-    //                         .write(
-    //                             format!(
-    //                                 "{}\t{}\t{}\t{}\t{}\t{}\n",
-    //                                 rodeo.resolve_unchecked(&triple.head),
-    //                                 rodeo.resolve_unchecked(&triple.relation),
-    //                                 rodeo.resolve_unchecked(&triple.tail),
-    //                                 rodeo.resolve_unchecked(&neighbor.0.relation),
-    //                                 rodeo.resolve_unchecked(&neighbor.0.tail),
-    //                                 neighbor.1
-    //                             )
-    //                             .as_bytes(),
-    //                         )
-    //                         .unwrap();
-    //                 }
-    //                 (triple, None) => {
-    //                     writer.write(format!("{}\t{}\t{}\n",
-    //                     rodeo.resolve_unchecked(&triple.head),
-    //                     rodeo.resolve_unchecked(&triple.relation),
-    //                     rodeo.resolve_unchecked(&triple.tail),).as_bytes()).unwrap();
-    //                 }
-    //             }
-    //         }
-    //     });
-    // writer.flush()?;
-    // bar.finish();
     println!("Found neighbor!");
     Ok(())
 }
