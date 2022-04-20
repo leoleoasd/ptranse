@@ -217,7 +217,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
             match triple {
                 (triple, Some(neighbor)) => {
                     writer
-                        .write(
+                        .write_all(
                             format!(
                                 "{}\t{}\t{}\t{}\t{}\t{}\n",
                                 entity_map.resolve_unchecked(&triple.head),
@@ -233,7 +233,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 (triple, None) => {
                     writer
-                        .write(
+                        .write_all(
                             format!(
                                 "{}\t{}\t{}\n",
                                 entity_map.resolve_unchecked(&triple.head),
