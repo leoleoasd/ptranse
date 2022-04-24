@@ -1,13 +1,7 @@
-use crossbeam::scope;
-use dashmap::DashMap;
-use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use lasso::{Key, Rodeo, RodeoReader};
-use petgraph::graph::{Graph, NodeIndex};
-use petgraph::prelude::*;
-use petgraph::Directed;
+use lasso::{Key, Rodeo};
 use rayon::prelude::*;
-use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::fs;
 use std::io::{BufWriter, Read, Write};
@@ -23,14 +17,6 @@ use std::sync::RwLock;
 #[repr(transparent)]
 pub struct Spur {
     key: NonZeroU32,
-}
-
-impl Spur {
-    /// Returns the [`NonZeroU32`] backing the current `Spur`
-    #[cfg_attr(feature = "inline-more", inline)]
-    pub const fn into_inner(self) -> NonZeroU32 {
-        self.key
-    }
 }
 
 unsafe impl Key for Spur {
@@ -104,7 +90,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let bar = make_spinner();
     // h, (r, t)
     // let mut one_hop_map: DashMap<Spur, Vec<(Spur, Spur)>, _> = DashMap::with_hasher_and_shard_amount(FxBuildHasher::default(), 128);
-    let mut one_hop_map = (0..entity_map.len() + 1)
+    let one_hop_map = (0..entity_map.len() + 1)
         .map(|_| RwLock::new(FxHashMap::<Spur, Vec<Spur>>::default()))
         .collect::<Vec<_>>();
     triples.par_iter().for_each(|triple| unsafe {
@@ -142,17 +128,21 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                 unsafe {
                     for t in t {
                         for (r2, t2) in one_hop_map.get_unchecked(t.into_usize()) {
-                            map.entry((*r, *r2)).or_insert_with(|| Vec::with_capacity(200)).extend(t2)
+                            map.entry((*r, *r2))
+                                .or_insert_with(|| Vec::with_capacity(200))
+                                .extend(t2)
                         }
                     }
                 }
             }
             bar.inc(1);
-            map.into_iter().map(|(k, mut v)| {
-                v.sort_unstable();
-                v.dedup();
-                (k, v.len())
-            }).collect::<FxHashMap<(Spur, Spur), usize>>()
+            map.into_iter()
+                .map(|(k, mut v)| {
+                    v.sort_unstable();
+                    v.dedup();
+                    (k, v.len())
+                })
+                .collect::<FxHashMap<(Spur, Spur), usize>>()
         })
         .collect();
 
@@ -172,7 +162,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
             bar.inc(1);
             unsafe {
                 let tail_neighbors = one_hop_map.get_unchecked(triple.tail.into_usize());
-                if tail_neighbors.len() == 0 {
+                if tail_neighbors.is_empty() {
                     (triple, None)
                 } else {
                     let scores: Vec<_> = tail_neighbors
@@ -203,8 +193,8 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                     (
                         triple,
                         Some((
-                            min_score.0.clone(),
-                            min_score.1.get_unchecked(0).clone(),
+                            *min_score.0,
+                            *min_score.1.get_unchecked(0),
                             min_score.2 / sum,
                         )),
                     )
