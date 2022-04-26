@@ -9,7 +9,7 @@ edition = "2021"
 clap = { version = "3.1.1", features = ["derive"] }
 text_io = "0.1.10"
 rayon = "1.5.1"
-indicatif = "0.16.2"
+indicatif = {version="0.16.2", features= ["rayon"]}
 rand = "0.8.4"
 thread_local = "1.1.4"
 num_cpus = "1.13.1"
@@ -17,4 +17,3 @@ crossbeam = "0.8.1"
 petgraph = "0.6.0"
 lasso = {version="0.6.0", features=[ "multi-threaded"]}
 fxhash = "0.2.1"
-dashmap = {path = "../dashmap", version="5.1.0", features=["raw-api"]}

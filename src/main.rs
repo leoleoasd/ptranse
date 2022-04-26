@@ -1,4 +1,3 @@
-#![feature(total_cmp)]
 use clap::{Parser, Subcommand};
 use std::panic;
 mod process;
