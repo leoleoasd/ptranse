@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use std::fmt::Debug;
 use std::io::{BufWriter, Read, Write};
 use std::num::NonZeroU32;
+use std::ops::Add;
 use std::sync::RwLock;
 use std::{fs, io};
 
@@ -178,6 +179,7 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Finding neighbor...");
     let bar = make_bar(triples.len());
     let mut writer = BufWriter::new(fs::File::create(String::from(name) + "_ptranse")?);
+    let mut lengthes = FxHashMap::<usize, usize>::default();
 
     triples
         .iter()
@@ -188,34 +190,38 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                 let mut candi: Vec<_> = path_map
                     .get_unchecked(triple.head.into_usize())
                     .get(&triple.tail)
-                    // should always be there
-                    // TODO: change to UNCHECKED version
-                    .unwrap()
-                    .iter()
-                    .map(|(r1, r2)| {
-                        // get <h, r1, r2>'s count
-                        let count = *two_hop_map
-                            .get_unchecked(triple.head.into_usize())
-                            .get(&(*r1, *r2))
-                            .unwrap();
-                        ((*r1, *r2), 1.0 / count as f64)
-                    })
-                    .collect();
-                candi.truncate(10);
-                while candi.len() < 10 {
+                    .map_or_else(Vec::<((Spur, Spur), f64)>::new, |x| {
+                        x.iter()
+                        .map(|(r1, r2)| {
+                            // get <h, r1, r2>'s count
+                            let count = *two_hop_map
+                                .get_unchecked(triple.head.into_usize())
+                                .get(&(*r1, *r2))
+                                .unwrap();
+                            ((*r1, *r2), 1.0 / count as f64)
+                        })
+                        .collect()
+                    });
+                *lengthes.entry(candi.len()).or_insert(0) += 1;
+                candi.sort_unstable_by(|a, b| {
+                    // should not be NAN
+                    b.1.partial_cmp(&a.1).unwrap()
+                });
+                candi.truncate(5);
+                while candi.len() < 5 {
                     candi.push(((0.into(), 0.into()), 0.0));
                 }
                 (triple, candi)
             }
         })
         .try_for_each(|(triple, candi)| -> Result<(), io::Error> {
-            if candi.len() != 10 {
-                panic!("WTF?");
+            if candi.len() != 5 {
+                panic!("WTF? {}", candi.len());
             }
             unsafe {
                 write!(
                     writer,
-                    "{} {} {}",
+                    "{}\t{}\t{}",
                     entity_map.resolve_unchecked(&triple.head),
                     relation_map.resolve_unchecked(&triple.relation),
                     entity_map.resolve_unchecked(&triple.tail)
@@ -223,15 +229,19 @@ pub fn process(name: &str) -> Result<(), Box<dyn std::error::Error>> {
                 for cand in candi {
                     write!(
                         writer,
-                        " {} {} {}",
+                        "\t{}\t{}\t{}",
                         relation_map.resolve_unchecked(&cand.0.0),
                         relation_map.resolve_unchecked(&cand.0.1),
                         cand.1
                     )?;
                 }
             }
+            writeln!(writer)?;
             Ok(())
         })?;
+    for (k,v) in lengthes {
+        println!("length of {} has {}", k, v);
+    }
     println!("Found neighbor!");
     Ok(())
 }
